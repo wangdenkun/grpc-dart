@@ -13,6 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:async';
+
 import 'package:clock/clock.dart';
 
 /// Options to configure a gRPC server for receiving keepalive signals.
@@ -51,7 +53,6 @@ class ServerKeepAlive {
   final Stream<void> dataNotifier;
 
   int _badPings = 0;
-  Stopwatch? _timeOfLastReceivedPing;
 
   ServerKeepAlive({
     this.tooManyBadPings,
@@ -71,26 +72,25 @@ class ServerKeepAlive {
 
   bool get _enforcesMaxBadPings => (options.maxBadPings ?? 0) > 0;
 
-  Future<void> _onPingReceived() async {
-    if (_enforcesMaxBadPings) {
-      if (_timeOfLastReceivedPing == null) {
-        _timeOfLastReceivedPing = clock.stopwatch()
-          ..reset()
-          ..start();
-      } else if (_timeOfLastReceivedPing!.elapsed >
-          options.minIntervalBetweenPingsWithoutData) {
-        _badPings++;
-      }
-      if (_badPings > options.maxBadPings!) {
-        await tooManyBadPings?.call();
-      }
+  Timer? watchTimer;
+  Future<void> _watchTimerTask(Timer timer) async{
+    if (_enforcesMaxBadPings) _badPings += 1;
+    if (_enforcesMaxBadPings && _badPings >= options.maxBadPings!) {
+      await tooManyBadPings?.call();
+      watchTimer?.cancel();
+    } else if (!_enforcesMaxBadPings) {
+      await tooManyBadPings?.call();
+      watchTimer?.cancel();
     }
+  }
+  Future<void> _onPingReceived() async {
+    watchTimer?.cancel();
+    watchTimer = Timer.periodic(options.minIntervalBetweenPingsWithoutData, _watchTimerTask);
   }
 
   void _onDataReceived() {
     if (_enforcesMaxBadPings) {
       _badPings = 0;
-      _timeOfLastReceivedPing = null;
     }
   }
 }
